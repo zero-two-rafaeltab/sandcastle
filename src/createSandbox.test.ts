@@ -330,6 +330,10 @@ describe("createSandbox", () => {
       .spyOn(clack.log, "message")
       .mockImplementation(() => {});
     const stepSpy = vi.spyOn(clack.log, "step").mockImplementation(() => {});
+    vi.spyOn(clack.log, "info").mockImplementation(() => {});
+    vi.spyOn(clack.log, "success").mockImplementation(() => {});
+    vi.spyOn(clack.log, "warning").mockImplementation(() => {});
+    vi.spyOn(clack.log, "error").mockImplementation(() => {});
 
     const sandbox = await createSandbox({
       branch: "stdout-streaming-branch",
@@ -374,10 +378,9 @@ describe("createSandbox", () => {
       expect(stepSpy).toHaveBeenCalledWith(expect.stringContaining("Bash"));
       expect(stepSpy).toHaveBeenCalledWith(expect.stringContaining("npm test"));
     } finally {
-      messageSpy.mockRestore();
-      stepSpy.mockRestore();
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
+      vi.restoreAllMocks();
     }
   });
 
