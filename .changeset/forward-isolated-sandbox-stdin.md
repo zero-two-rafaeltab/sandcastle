@@ -2,4 +2,4 @@
 "@ai-hero/sandcastle": minor
 ---
 
-Forward agent prompt stdin through temporary files in the Vercel and Daytona isolated sandbox providers instead of silently discarding it. Support Vercel Sandbox SDK 2.x and 3.x filesystem layouts.
+Ensure the Vercel and Daytona sandbox providers deliver prompts supplied over stdin, so stdin-based agents no longer receive empty prompts. The Vercel provider now supports `@vercel/sandbox` 2.x and 3.x; 1.x is excluded because early releases can lose streamed output.
