@@ -120,21 +120,21 @@ const parseStreamJsonLine = (line: string): ParsedStreamEvent[] => {
   return [];
 };
 
-/**
- * Cursor Agent CLI print mode passes the prompt as a positional argv argument; stdin is not
- * documented for delivering the prompt. Linux enforces a per-argument limit (~128 KiB, ARG_MAX
- * stack). Stay slightly under so users get a clear error instead of spawn E2BIG.
- */
-const CURSOR_PRINT_PROMPT_MAX_BYTES = 120 * 1024;
+/** Stay below Linux's per-argument limit so users get a clear error instead of spawn E2BIG. */
+const PROMPT_ARGV_SAFE_MAX_BYTES = 120 * 1024;
 
-function assertCursorPrintPromptFitsArgv(prompt: string): void {
-  const n = Buffer.byteLength(prompt, "utf8");
-  if (n > CURSOR_PRINT_PROMPT_MAX_BYTES) {
+const assertPromptFitsArgv = (
+  prompt: string,
+  description: string,
+  remediation: string,
+): void => {
+  const bytes = Buffer.byteLength(prompt, "utf8");
+  if (bytes > PROMPT_ARGV_SAFE_MAX_BYTES) {
     throw new Error(
-      `Cursor print-mode prompt is ${n} bytes (max ${CURSOR_PRINT_PROMPT_MAX_BYTES} bytes). The Cursor CLI accepts the prompt only as a command-line argument; shorten the prompt or split the work. Other Sandcastle providers use stdin for large prompts.`,
+      `${description} is ${bytes} bytes (max ${PROMPT_ARGV_SAFE_MAX_BYTES} bytes). ${remediation}`,
     );
   }
-}
+};
 
 /** Cursor stream-json emits top-level `tool_call` events (see Cursor CLI output-format docs). */
 const parseCursorToolCallStarted = (
@@ -849,7 +849,11 @@ export const cursor = (
     prompt,
     dangerouslySkipPermissions,
   }: AgentCommandOptions): PrintCommand {
-    assertCursorPrintPromptFitsArgv(prompt);
+    assertPromptFitsArgv(
+      prompt,
+      "Cursor print-mode prompt",
+      "The Cursor CLI accepts the prompt only as a command-line argument; shorten the prompt or split the work. Other Sandcastle providers use stdin for large prompts.",
+    );
     const forceFlag = dangerouslySkipPermissions ? " --force" : "";
 
     return {
@@ -942,21 +946,6 @@ const parseOpenCodeStreamLine = (line: string): ParsedStreamEvent[] => {
   return [];
 };
 
-/**
- * Interactive OpenCode seed prompts must remain in argv because stdin belongs to
- * the terminal. Stay below Linux's per-argument limit so the error is actionable.
- */
-const OPENCODE_INTERACTIVE_PROMPT_MAX_BYTES = 120 * 1024;
-
-const assertOpenCodeInteractivePromptFitsArgv = (prompt: string): void => {
-  const bytes = Buffer.byteLength(prompt, "utf8");
-  if (bytes > OPENCODE_INTERACTIVE_PROMPT_MAX_BYTES) {
-    throw new Error(
-      `OpenCode interactive prompt is ${bytes} bytes (max ${OPENCODE_INTERACTIVE_PROMPT_MAX_BYTES} bytes). Shorten the prompt or use non-interactive run().`,
-    );
-  }
-};
-
 /** Options for the opencode agent provider. */
 export interface OpenCodeOptions {
   /** Provider-specific reasoning effort variant (e.g. "high", "max", "low", "minimal"). */
@@ -999,7 +988,11 @@ export const opencode = (
   },
 
   buildInteractiveArgs({ prompt }: AgentCommandOptions): string[] {
-    assertOpenCodeInteractivePromptFitsArgv(prompt);
+    assertPromptFitsArgv(
+      prompt,
+      "OpenCode interactive prompt",
+      "Shorten the prompt or use non-interactive run().",
+    );
     const args = ["opencode", "--model", model];
     if (options?.agent) args.push("--agent", options.agent);
     // The TUI's seed-prompt flag is `--prompt` (long form only); `-p` is the
@@ -1017,24 +1010,6 @@ export const opencode = (
 // ---------------------------------------------------------------------------
 // GitHub Copilot CLI agent provider
 // ---------------------------------------------------------------------------
-
-/**
- * Copilot CLI print mode passes the prompt as the `-p` argv argument. (The CLI
- * can also read a prompt piped on stdin — `echo "..." | copilot` — but we use
- * the `-p` argv form here for parity with the tested print-command path.) Linux
- * enforces a per-argument limit (~128 KiB, ARG_MAX stack). Stay slightly under
- * so users get a clear error instead of spawn E2BIG. Mirrors the Cursor guard.
- */
-const COPILOT_PRINT_PROMPT_MAX_BYTES = 120 * 1024;
-
-function assertCopilotPrintPromptFitsArgv(prompt: string): void {
-  const n = Buffer.byteLength(prompt, "utf8");
-  if (n > COPILOT_PRINT_PROMPT_MAX_BYTES) {
-    throw new Error(
-      `Copilot print-mode prompt is ${n} bytes (max ${COPILOT_PRINT_PROMPT_MAX_BYTES} bytes). This provider passes the prompt as a command-line argument; shorten the prompt or split the work. Other Sandcastle providers use stdin for large prompts.`,
-    );
-  }
-}
 
 /**
  * Parse one line of `copilot --output-format json` JSONL output.
@@ -1141,7 +1116,11 @@ export const copilot = (
     prompt,
     dangerouslySkipPermissions,
   }: AgentCommandOptions): PrintCommand {
-    assertCopilotPrintPromptFitsArgv(prompt);
+    assertPromptFitsArgv(
+      prompt,
+      "Copilot print-mode prompt",
+      "This provider passes the prompt as a command-line argument; shorten the prompt or split the work. Other Sandcastle providers use stdin for large prompts.",
+    );
     const allowAll = dangerouslySkipPermissions ? " --allow-all-tools" : "";
     const effortFlag = options?.effort ? ` --effort ${options.effort}` : "";
     return {
