@@ -18,10 +18,7 @@ import {
   type IsolatedSandboxProvider,
 } from "../SandboxProvider.js";
 import { BoundedTail, MAX_TAIL_CHARS } from "../boundedTail.js";
-import {
-  createStdinFilePath,
-  redirectCommandStdinFromFile,
-} from "./stdin-file.js";
+import { redirectCommandStdinFromFile, withStdinFile } from "./stdin-file.js";
 
 /** Worktree directory inside the Vercel sandbox's default working directory. */
 const VERCEL_WORKTREE_DIR = "workspace";
@@ -213,95 +210,91 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
           },
         ): Promise<ExecResult> => {
           const stdin = opts?.stdin;
-          const stdinPath =
-            stdin !== undefined ? createStdinFilePath() : undefined;
 
-          try {
-            if (stdinPath !== undefined && stdin !== undefined) {
-              await sandbox.writeFiles([
-                { path: stdinPath, content: Buffer.from(stdin) },
-              ]);
-            }
+          return withStdinFile(
+            stdin,
+            {
+              upload: (path, content) =>
+                sandbox.writeFiles([{ path, content }]),
+              remove: async (path) => {
+                await sandbox.runCommand({
+                  cmd: "rm",
+                  args: ["-f", "--", path],
+                });
+              },
+            },
+            async (stdinPath) => {
+              const commandToRun = stdinPath
+                ? redirectCommandStdinFromFile(command, stdinPath)
+                : command;
 
-            const commandToRun = stdinPath
-              ? redirectCommandStdinFromFile(command, stdinPath)
-              : command;
+              if (opts?.onLine) {
+                const onLine = opts.onLine;
+                const stdoutTail = new BoundedTail(maxOutputTailChars, "\n");
+                const stderrTail = new BoundedTail(maxOutputTailChars, "");
+                let partial = "";
 
-            if (opts?.onLine) {
-              const onLine = opts.onLine;
-              const stdoutTail = new BoundedTail(maxOutputTailChars, "\n");
-              const stderrTail = new BoundedTail(maxOutputTailChars, "");
-              let partial = "";
+                const stdoutWritable = new Writable({
+                  write(chunk, _encoding, callback) {
+                    const text = partial + chunk.toString();
+                    const lines = text.split("\n");
+                    partial = lines.pop() ?? "";
+                    for (const line of lines) {
+                      stdoutTail.push(line);
+                      onLine(line);
+                    }
+                    callback();
+                  },
+                  final(callback) {
+                    if (partial) {
+                      stdoutTail.push(partial);
+                      onLine(partial);
+                      partial = "";
+                    }
+                    callback();
+                  },
+                });
 
-              const stdoutWritable = new Writable({
-                write(chunk, _encoding, callback) {
-                  const text = partial + chunk.toString();
-                  const lines = text.split("\n");
-                  partial = lines.pop() ?? "";
-                  for (const line of lines) {
-                    stdoutTail.push(line);
-                    onLine(line);
-                  }
-                  callback();
-                },
-                final(callback) {
-                  if (partial) {
-                    stdoutTail.push(partial);
-                    onLine(partial);
-                    partial = "";
-                  }
-                  callback();
-                },
-              });
+                const stderrWritable = new Writable({
+                  write(chunk, _encoding, callback) {
+                    stderrTail.push(chunk.toString());
+                    callback();
+                  },
+                });
 
-              const stderrWritable = new Writable({
-                write(chunk, _encoding, callback) {
-                  stderrTail.push(chunk.toString());
-                  callback();
-                },
-              });
+                const result = await sandbox.runCommand({
+                  cmd: "sh",
+                  args: ["-c", commandToRun],
+                  cwd: opts?.cwd ?? worktreePath,
+                  stdout: stdoutWritable,
+                  stderr: stderrWritable,
+                  ...(opts?.sudo ? { sudo: true } : {}),
+                });
+
+                return {
+                  stdout: stdoutTail.toString(),
+                  stderr: stderrTail.toString(),
+                  exitCode: result.exitCode,
+                };
+              }
 
               const result = await sandbox.runCommand({
                 cmd: "sh",
                 args: ["-c", commandToRun],
                 cwd: opts?.cwd ?? worktreePath,
-                stdout: stdoutWritable,
-                stderr: stderrWritable,
                 ...(opts?.sudo ? { sudo: true } : {}),
               });
 
+              const stdout = await result.stdout();
+              const stderr = await result.stderr();
+
               return {
-                stdout: stdoutTail.toString(),
-                stderr: stderrTail.toString(),
+                stdout,
+                stderr,
                 exitCode: result.exitCode,
               };
-            }
-
-            const result = await sandbox.runCommand({
-              cmd: "sh",
-              args: ["-c", commandToRun],
-              cwd: opts?.cwd ?? worktreePath,
-              ...(opts?.sudo ? { sudo: true } : {}),
-            });
-
-            const stdout = await result.stdout();
-            const stderr = await result.stderr();
-
-            return {
-              stdout,
-              stderr,
-              exitCode: result.exitCode,
-            };
-          } finally {
-            if (stdinPath !== undefined) {
-              await sandbox
-                .runCommand({
-                  cmd: "rm",
-                  args: ["-f", "--", stdinPath],
-                })
-                .catch(() => {});
-            }
-          }
+            },
+          );
         },
 
         copyIn: async (

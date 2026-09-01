@@ -2,6 +2,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setVercelSandboxCreate } from "../test-fixtures/vercel-sandbox.js";
 import { vercel } from "./vercel.js";
 
+type RunCommand = (options: { cmd: string }) => Promise<{
+  exitCode: number;
+  stdout: () => Promise<string>;
+  stderr: () => Promise<string>;
+}>;
+
+type WriteFiles = (
+  files: Array<{ path: string; content: string | Buffer }>,
+) => Promise<void>;
+
+const configureVercelSandbox = (
+  runCommand: RunCommand,
+  writeFiles: WriteFiles = vi.fn(async () => {}),
+): void => {
+  setVercelSandboxCreate(async () => ({
+    runCommand,
+    writeFiles,
+    readFileToBuffer: vi.fn(),
+    stop: vi.fn(async () => {}),
+  }));
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -29,13 +51,7 @@ describe("vercel()", () => {
         stdout: async () => (options.cmd === "pwd" ? `${defaultCwd}\n` : ""),
         stderr: async () => "",
       }));
-      setVercelSandboxCreate(async () => ({
-        mkDir: vi.fn(async () => {}),
-        runCommand,
-        writeFiles: vi.fn(async () => {}),
-        readFileToBuffer: vi.fn(),
-        stop: vi.fn(async () => {}),
-      }));
+      configureVercelSandbox(runCommand);
 
       const handle = await vercel().create({ env: {} });
 
@@ -90,13 +106,7 @@ describe("vercel()", () => {
         _files: Array<{ path: string; content: string | Buffer }>,
       ): Promise<void> => {},
     );
-    setVercelSandboxCreate(async () => ({
-      mkDir: vi.fn(async () => {}),
-      runCommand,
-      writeFiles,
-      readFileToBuffer: vi.fn(),
-      stop: vi.fn(async () => {}),
-    }));
+    configureVercelSandbox(runCommand, writeFiles);
 
     const handle = await vercel().create({ env: {} });
     const result = await handle.exec("claude --print -p -", {
@@ -142,13 +152,7 @@ describe("vercel()", () => {
         _files: Array<{ path: string; content: string | Buffer }>,
       ): Promise<void> => {},
     );
-    setVercelSandboxCreate(async () => ({
-      mkDir: vi.fn(async () => {}),
-      runCommand,
-      writeFiles,
-      readFileToBuffer: vi.fn(),
-      stop: vi.fn(async () => {}),
-    }));
+    configureVercelSandbox(runCommand, writeFiles);
 
     const handle = await vercel().create({ env: {} });
     await expect(

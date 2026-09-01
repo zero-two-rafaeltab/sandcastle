@@ -52,11 +52,7 @@ describe("daytona()", () => {
       `chmod 600 '${path}' && sh -c 'claude --print -p -' < '${path}'`,
       "/home/daytona/workspace",
     );
-    expect(executeCommand).toHaveBeenNthCalledWith(
-      2,
-      `rm -f -- '${path}'`,
-      "/home/daytona/workspace",
-    );
+    expect(executeCommand).toHaveBeenNthCalledWith(2, `rm -f -- '${path}'`);
     expect(result).toEqual({
       stdout: "agent output",
       stderr: "",
@@ -98,9 +94,38 @@ describe("daytona()", () => {
       async: true,
     });
     expect(deleteSession).toHaveBeenCalledOnce();
-    expect(executeCommand).toHaveBeenCalledWith(
-      `rm -f -- '${stdinPath}'`,
-      "/home/daytona/workspace",
-    );
+    expect(executeCommand).toHaveBeenCalledWith(`rm -f -- '${stdinPath}'`);
+  });
+
+  it("cleans up stdin when the requested working directory is invalid", async () => {
+    const uploadedFiles = new Set<string>();
+    const invalidCwd = "/missing/worktree";
+    const executeCommand = vi.fn(async (command: string, cwd?: string) => {
+      if (cwd === invalidCwd) {
+        return { result: "", exitCode: 1 };
+      }
+
+      const removedPath = command.match(/^rm -f -- '([^']+)'$/)?.[1];
+      if (removedPath) uploadedFiles.delete(removedPath);
+      return { result: "", exitCode: 0 };
+    });
+    const uploadFile = vi.fn(async (_content: Buffer, path: string) => {
+      uploadedFiles.add(path);
+    });
+    sdk.create.mockResolvedValue({
+      getWorkDir: vi.fn(async () => "/home/daytona/workspace"),
+      getUserHomeDir: vi.fn(async () => "/home/daytona"),
+      process: { executeCommand },
+      fs: { uploadFile },
+    });
+
+    const handle = await daytona().create({ env: {} });
+    const result = await handle.exec("agent --prompt -", {
+      cwd: invalidCwd,
+      stdin: "prompt",
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(uploadedFiles).toEqual(new Set());
   });
 });

@@ -15,9 +15,9 @@ import {
 } from "../SandboxProvider.js";
 import { BoundedTail, MAX_TAIL_CHARS } from "../boundedTail.js";
 import {
-  createStdinFilePath,
   redirectCommandStdinFromFile,
   removeStdinFileCommand,
+  withStdinFile,
 } from "./stdin-file.js";
 
 import type {
@@ -52,8 +52,7 @@ export interface DaytonaOptions {
    * Supports both image-based and snapshot-based creation.
    */
   readonly create?:
-    | CreateSandboxFromImageParams
-    | CreateSandboxFromSnapshotParams;
+    CreateSandboxFromImageParams | CreateSandboxFromSnapshotParams;
 
   /** Environment variables injected by this provider. Merged at launch time with env resolver and agent provider env. */
   readonly env?: Record<string, string>;
@@ -118,90 +117,91 @@ export const daytona = (options?: DaytonaOptions): IsolatedSandboxProvider =>
         ): Promise<ExecResult> => {
           const effectiveCommand = opts?.sudo ? `sudo ${command}` : command;
           const stdin = opts?.stdin;
-          const stdinPath =
-            stdin !== undefined ? createStdinFilePath() : undefined;
           const cwd = opts?.cwd ?? worktreePath;
 
-          try {
-            if (stdinPath !== undefined && stdin !== undefined) {
-              await sandbox.fs.uploadFile(Buffer.from(stdin), stdinPath);
-            }
-
-            const commandToRun = stdinPath
-              ? redirectCommandStdinFromFile(effectiveCommand, stdinPath)
-              : effectiveCommand;
-
-            if (opts?.onLine) {
-              const onLine = opts.onLine;
-              const sessionId = `sandcastle-${crypto.randomUUID()}`;
-              await sandbox.process.createSession(sessionId);
-
-              try {
-                const execResponse =
-                  await sandbox.process.executeSessionCommand(sessionId, {
-                    command: `cd ${cwd} && ${commandToRun}`,
-                    async: true,
-                  });
-
-                const cmdId = execResponse.cmdId!;
-
-                const stdoutTail = new BoundedTail(maxOutputTailChars, "\n");
-                const stderrTail = new BoundedTail(maxOutputTailChars, "");
-                let partial = "";
-
-                await sandbox.process.getSessionCommandLogs(
-                  sessionId,
-                  cmdId,
-                  (chunk: string) => {
-                    const text = partial + chunk;
-                    const lines = text.split("\n");
-                    partial = lines.pop() ?? "";
-                    for (const line of lines) {
-                      stdoutTail.push(line);
-                      onLine(line);
-                    }
-                  },
-                  (chunk: string) => {
-                    stderrTail.push(chunk);
-                  },
+          return withStdinFile(
+            stdin,
+            {
+              upload: (path, content) => sandbox.fs.uploadFile(content, path),
+              remove: async (path) => {
+                await sandbox.process.executeCommand(
+                  removeStdinFileCommand(path),
                 );
+              },
+            },
+            async (stdinPath) => {
+              const commandToRun = stdinPath
+                ? redirectCommandStdinFromFile(effectiveCommand, stdinPath)
+                : effectiveCommand;
 
-                if (partial) {
-                  stdoutTail.push(partial);
-                  onLine(partial);
+              if (opts?.onLine) {
+                const onLine = opts.onLine;
+                const sessionId = `sandcastle-${crypto.randomUUID()}`;
+                await sandbox.process.createSession(sessionId);
+
+                try {
+                  const execResponse =
+                    await sandbox.process.executeSessionCommand(sessionId, {
+                      command: `cd ${cwd} && ${commandToRun}`,
+                      async: true,
+                    });
+
+                  const cmdId = execResponse.cmdId!;
+
+                  const stdoutTail = new BoundedTail(maxOutputTailChars, "\n");
+                  const stderrTail = new BoundedTail(maxOutputTailChars, "");
+                  let partial = "";
+
+                  await sandbox.process.getSessionCommandLogs(
+                    sessionId,
+                    cmdId,
+                    (chunk: string) => {
+                      const text = partial + chunk;
+                      const lines = text.split("\n");
+                      partial = lines.pop() ?? "";
+                      for (const line of lines) {
+                        stdoutTail.push(line);
+                        onLine(line);
+                      }
+                    },
+                    (chunk: string) => {
+                      stderrTail.push(chunk);
+                    },
+                  );
+
+                  if (partial) {
+                    stdoutTail.push(partial);
+                    onLine(partial);
+                  }
+
+                  const cmdInfo = await sandbox.process.getSessionCommand(
+                    sessionId,
+                    cmdId,
+                  );
+
+                  return {
+                    stdout: stdoutTail.toString(),
+                    stderr: stderrTail.toString(),
+                    exitCode: cmdInfo.exitCode ?? 0,
+                  };
+                } finally {
+                  await sandbox.process
+                    .deleteSession(sessionId)
+                    .catch(() => {});
                 }
-
-                const cmdInfo = await sandbox.process.getSessionCommand(
-                  sessionId,
-                  cmdId,
-                );
-
-                return {
-                  stdout: stdoutTail.toString(),
-                  stderr: stderrTail.toString(),
-                  exitCode: cmdInfo.exitCode ?? 0,
-                };
-              } finally {
-                await sandbox.process.deleteSession(sessionId).catch(() => {});
               }
-            }
 
-            const response = await sandbox.process.executeCommand(
-              commandToRun,
-              cwd,
-            );
-            return {
-              stdout: response.result,
-              stderr: "",
-              exitCode: response.exitCode,
-            };
-          } finally {
-            if (stdinPath !== undefined) {
-              await sandbox.process
-                .executeCommand(removeStdinFileCommand(stdinPath), cwd)
-                .catch(() => {});
-            }
-          }
+              const response = await sandbox.process.executeCommand(
+                commandToRun,
+                cwd,
+              );
+              return {
+                stdout: response.result,
+                stderr: "",
+                exitCode: response.exitCode,
+              };
+            },
+          );
         },
 
         copyIn: async (
