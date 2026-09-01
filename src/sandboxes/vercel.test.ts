@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setVercelSandboxCreate } from "../test-fixtures/vercel-sandbox.js";
 import { vercel } from "./vercel.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("vercel()", () => {
   it("returns a SandboxProvider with tag 'isolated' and name 'vercel'", () => {
@@ -37,5 +42,101 @@ describe("vercel()", () => {
   it("defaults env to empty object when not provided", () => {
     const provider = vercel();
     expect(provider.env).toEqual({});
+  });
+
+  it("delivers exec stdin through a temporary sandbox file", async () => {
+    const runCommand = vi.fn(async (options: { cmd: string }) => ({
+      exitCode: 0,
+      stdout: async () => (options.cmd === "rm" ? "" : "agent output"),
+      stderr: async () => "",
+    }));
+    const writeFiles = vi.fn(
+      async (
+        _files: Array<{ path: string; content: string | Buffer }>,
+      ): Promise<void> => {},
+    );
+    setVercelSandboxCreate(async () => ({
+      mkDir: vi.fn(async () => {}),
+      runCommand,
+      writeFiles,
+      readFileToBuffer: vi.fn(),
+      stop: vi.fn(async () => {}),
+    }));
+
+    const handle = await vercel().create({ env: {} });
+    const result = await handle.exec("claude --print -p -", {
+      stdin: "prompt with 'quotes'\nand a trailing newline\n",
+    });
+
+    const { path, content } = writeFiles.mock.calls[0]![0]![0]!;
+    expect(path).toMatch(/^\/tmp\/sandcastle-stdin-[\da-f-]+$/);
+    expect(content.toString()).toBe(
+      "prompt with 'quotes'\nand a trailing newline\n",
+    );
+    expect(runCommand).toHaveBeenNthCalledWith(1, {
+      cmd: "sh",
+      args: [
+        "-c",
+        `chmod 600 '${path}' && exec sh -c 'claude --print -p -' < '${path}'`,
+      ],
+      cwd: "/vercel/sandbox/workspace",
+    });
+    expect(runCommand).toHaveBeenNthCalledWith(2, {
+      cmd: "rm",
+      args: ["-f", "--", path],
+    });
+    expect(result).toEqual({
+      stdout: "agent output",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("delivers stdin while streaming output and cleans up after failure", async () => {
+    const executionError = new Error("remote command failed");
+    const runCommand = vi
+      .fn()
+      .mockRejectedValueOnce(executionError)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: async () => "",
+        stderr: async () => "",
+      });
+    const writeFiles = vi.fn(
+      async (
+        _files: Array<{ path: string; content: string | Buffer }>,
+      ): Promise<void> => {},
+    );
+    setVercelSandboxCreate(async () => ({
+      mkDir: vi.fn(async () => {}),
+      runCommand,
+      writeFiles,
+      readFileToBuffer: vi.fn(),
+      stop: vi.fn(async () => {}),
+    }));
+
+    const handle = await vercel().create({ env: {} });
+    await expect(
+      handle.exec("claude --model 'claude-opus' --print -p -", {
+        stdin: "prompt",
+        onLine: vi.fn(),
+      }),
+    ).rejects.toBe(executionError);
+
+    const stdinPath = writeFiles.mock.calls[0]![0]![0]!.path;
+    expect(runCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        cmd: "sh",
+        args: [
+          "-c",
+          `chmod 600 '${stdinPath}' && exec sh -c 'claude --model '\\''claude-opus'\\'' --print -p -' < '${stdinPath}'`,
+        ],
+      }),
+    );
+    expect(runCommand).toHaveBeenNthCalledWith(2, {
+      cmd: "rm",
+      args: ["-f", "--", stdinPath],
+    });
   });
 });

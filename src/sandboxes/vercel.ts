@@ -18,6 +18,10 @@ import {
   type IsolatedSandboxProvider,
 } from "../SandboxProvider.js";
 import { BoundedTail, MAX_TAIL_CHARS } from "../boundedTail.js";
+import {
+  createStdinFilePath,
+  redirectCommandStdinFromFile,
+} from "./stdin-file.js";
 
 /** Worktree path inside the Vercel sandbox. */
 const VERCEL_REPO_PATH = "/vercel/sandbox/workspace";
@@ -180,73 +184,99 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
             onLine?: (line: string) => void;
             cwd?: string;
             sudo?: boolean;
+            stdin?: string;
           },
         ): Promise<ExecResult> => {
-          if (opts?.onLine) {
-            const onLine = opts.onLine;
-            const stdoutTail = new BoundedTail(maxOutputTailChars, "\n");
-            const stderrTail = new BoundedTail(maxOutputTailChars, "");
-            let partial = "";
+          const stdin = opts?.stdin;
+          const stdinPath =
+            stdin !== undefined ? createStdinFilePath() : undefined;
 
-            const stdoutWritable = new Writable({
-              write(chunk, _encoding, callback) {
-                const text = partial + chunk.toString();
-                const lines = text.split("\n");
-                partial = lines.pop() ?? "";
-                for (const line of lines) {
-                  stdoutTail.push(line);
-                  onLine(line);
-                }
-                callback();
-              },
-              final(callback) {
-                if (partial) {
-                  stdoutTail.push(partial);
-                  onLine(partial);
-                  partial = "";
-                }
-                callback();
-              },
-            });
+          try {
+            if (stdinPath !== undefined && stdin !== undefined) {
+              await sandbox.writeFiles([
+                { path: stdinPath, content: Buffer.from(stdin) },
+              ]);
+            }
 
-            const stderrWritable = new Writable({
-              write(chunk, _encoding, callback) {
-                stderrTail.push(chunk.toString());
-                callback();
-              },
-            });
+            const commandToRun = stdinPath
+              ? redirectCommandStdinFromFile(command, stdinPath)
+              : command;
+
+            if (opts?.onLine) {
+              const onLine = opts.onLine;
+              const stdoutTail = new BoundedTail(maxOutputTailChars, "\n");
+              const stderrTail = new BoundedTail(maxOutputTailChars, "");
+              let partial = "";
+
+              const stdoutWritable = new Writable({
+                write(chunk, _encoding, callback) {
+                  const text = partial + chunk.toString();
+                  const lines = text.split("\n");
+                  partial = lines.pop() ?? "";
+                  for (const line of lines) {
+                    stdoutTail.push(line);
+                    onLine(line);
+                  }
+                  callback();
+                },
+                final(callback) {
+                  if (partial) {
+                    stdoutTail.push(partial);
+                    onLine(partial);
+                    partial = "";
+                  }
+                  callback();
+                },
+              });
+
+              const stderrWritable = new Writable({
+                write(chunk, _encoding, callback) {
+                  stderrTail.push(chunk.toString());
+                  callback();
+                },
+              });
+
+              const result = await sandbox.runCommand({
+                cmd: "sh",
+                args: ["-c", commandToRun],
+                cwd: opts?.cwd ?? VERCEL_REPO_PATH,
+                stdout: stdoutWritable,
+                stderr: stderrWritable,
+                ...(opts?.sudo ? { sudo: true } : {}),
+              });
+
+              return {
+                stdout: stdoutTail.toString(),
+                stderr: stderrTail.toString(),
+                exitCode: result.exitCode,
+              };
+            }
 
             const result = await sandbox.runCommand({
               cmd: "sh",
-              args: ["-c", command],
+              args: ["-c", commandToRun],
               cwd: opts?.cwd ?? VERCEL_REPO_PATH,
-              stdout: stdoutWritable,
-              stderr: stderrWritable,
               ...(opts?.sudo ? { sudo: true } : {}),
             });
 
+            const stdout = await result.stdout();
+            const stderr = await result.stderr();
+
             return {
-              stdout: stdoutTail.toString(),
-              stderr: stderrTail.toString(),
+              stdout,
+              stderr,
               exitCode: result.exitCode,
             };
+          } finally {
+            if (stdinPath !== undefined) {
+              await sandbox
+                .runCommand({
+                  cmd: "rm",
+                  args: ["-f", "--", stdinPath],
+                })
+                .catch(() => {});
+            }
           }
-
-          const result = await sandbox.runCommand({
-            cmd: "sh",
-            args: ["-c", command],
-            cwd: opts?.cwd ?? VERCEL_REPO_PATH,
-            ...(opts?.sudo ? { sudo: true } : {}),
-          });
-
-          const stdout = await result.stdout();
-          const stderr = await result.stderr();
-
-          return {
-            stdout,
-            stderr,
-            exitCode: result.exitCode,
-          };
         },
 
         copyIn: async (
