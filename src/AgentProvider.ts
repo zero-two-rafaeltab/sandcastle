@@ -942,6 +942,21 @@ const parseOpenCodeStreamLine = (line: string): ParsedStreamEvent[] => {
   return [];
 };
 
+/**
+ * Interactive OpenCode seed prompts must remain in argv because stdin belongs to
+ * the terminal. Stay below Linux's per-argument limit so the error is actionable.
+ */
+const OPENCODE_INTERACTIVE_PROMPT_MAX_BYTES = 120 * 1024;
+
+const assertOpenCodeInteractivePromptFitsArgv = (prompt: string): void => {
+  const bytes = Buffer.byteLength(prompt, "utf8");
+  if (bytes > OPENCODE_INTERACTIVE_PROMPT_MAX_BYTES) {
+    throw new Error(
+      `OpenCode interactive prompt is ${bytes} bytes (max ${OPENCODE_INTERACTIVE_PROMPT_MAX_BYTES} bytes). Shorten the prompt or use non-interactive run().`,
+    );
+  }
+};
+
 /** Options for the opencode agent provider. */
 export interface OpenCodeOptions {
   /** Provider-specific reasoning effort variant (e.g. "high", "max", "low", "minimal"). */
@@ -978,11 +993,13 @@ export const opencode = (
       ? " --dangerously-skip-permissions"
       : "";
     return {
-      command: `opencode run --format json --model ${shellEscape(model)}${variantFlag}${agentFlag}${permissionsFlag} ${shellEscape(prompt)}`,
+      command: `opencode run --format json --model ${shellEscape(model)}${variantFlag}${agentFlag}${permissionsFlag}`,
+      stdin: prompt,
     };
   },
 
   buildInteractiveArgs({ prompt }: AgentCommandOptions): string[] {
+    assertOpenCodeInteractivePromptFitsArgv(prompt);
     const args = ["opencode", "--model", model];
     if (options?.agent) args.push("--agent", options.agent);
     // The TUI's seed-prompt flag is `--prompt` (long form only); `-p` is the
