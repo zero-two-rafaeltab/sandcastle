@@ -77,7 +77,7 @@ describe("vercel()", () => {
       cmd: "sh",
       args: [
         "-c",
-        `chmod 600 '${path}' && exec sh -c 'claude --print -p -' < '${path}'`,
+        `chmod 600 '${path}' && sh -c 'claude --print -p -' < '${path}'`,
       ],
       cwd: "/vercel/sandbox/workspace",
     });
@@ -130,7 +130,7 @@ describe("vercel()", () => {
         cmd: "sh",
         args: [
           "-c",
-          `chmod 600 '${stdinPath}' && exec sh -c 'claude --model '\\''claude-opus'\\'' --print -p -' < '${stdinPath}'`,
+          `chmod 600 '${stdinPath}' && sh -c 'claude --model '\\''claude-opus'\\'' --print -p -' < '${stdinPath}'`,
         ],
       }),
     );

@@ -10,7 +10,7 @@ export const redirectCommandStdinFromFile = (
   command: string,
   stdinPath: string,
 ): string =>
-  `chmod 600 ${shellEscape(stdinPath)} && exec sh -c ${shellEscape(command)} < ${shellEscape(stdinPath)}`;
+  `chmod 600 ${shellEscape(stdinPath)} && sh -c ${shellEscape(command)} < ${shellEscape(stdinPath)}`;
 
 export const removeStdinFileCommand = (stdinPath: string): string =>
   `rm -f -- ${shellEscape(stdinPath)}`;

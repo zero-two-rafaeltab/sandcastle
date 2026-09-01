@@ -49,7 +49,7 @@ describe("daytona()", () => {
     );
     expect(executeCommand).toHaveBeenNthCalledWith(
       1,
-      `chmod 600 '${path}' && exec sh -c 'claude --print -p -' < '${path}'`,
+      `chmod 600 '${path}' && sh -c 'claude --print -p -' < '${path}'`,
       "/home/daytona/workspace",
     );
     expect(executeCommand).toHaveBeenNthCalledWith(
@@ -94,7 +94,7 @@ describe("daytona()", () => {
 
     const stdinPath = uploadFile.mock.calls[0]![1];
     expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), {
-      command: `cd /home/daytona/workspace && chmod 600 '${stdinPath}' && exec sh -c 'claude --model '\\''claude-opus'\\'' --print -p -' < '${stdinPath}'`,
+      command: `cd /home/daytona/workspace && chmod 600 '${stdinPath}' && sh -c 'claude --model '\\''claude-opus'\\'' --print -p -' < '${stdinPath}'`,
       async: true,
     });
     expect(deleteSession).toHaveBeenCalledOnce();
