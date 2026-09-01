@@ -18,6 +18,36 @@ describe("vercel()", () => {
     expect(typeof provider.create).toBe("function");
   });
 
+  it.each([
+    ["2.9", "/vercel/sandbox", "/vercel/sandbox/workspace"],
+    ["3.2", "/vercel", "/vercel/workspace"],
+  ])(
+    "discovers the worktree path for Vercel SDK %s",
+    async (_version, defaultCwd, expectedWorktreePath) => {
+      const runCommand = vi.fn(async (options: { cmd: string }) => ({
+        exitCode: 0,
+        stdout: async () => (options.cmd === "pwd" ? `${defaultCwd}\n` : ""),
+        stderr: async () => "",
+      }));
+      setVercelSandboxCreate(async () => ({
+        mkDir: vi.fn(async () => {}),
+        runCommand,
+        writeFiles: vi.fn(async () => {}),
+        readFileToBuffer: vi.fn(),
+        stop: vi.fn(async () => {}),
+      }));
+
+      const handle = await vercel().create({ env: {} });
+
+      expect(handle.worktreePath).toBe(expectedWorktreePath);
+      expect(runCommand).toHaveBeenNthCalledWith(1, { cmd: "pwd" });
+      expect(runCommand).toHaveBeenNthCalledWith(2, {
+        cmd: "mkdir",
+        args: ["-p", expectedWorktreePath],
+      });
+    },
+  );
+
   it("accepts a token option", () => {
     // Should not throw
     const provider = vercel({ token: "my-token" });
@@ -47,7 +77,12 @@ describe("vercel()", () => {
   it("delivers exec stdin through a temporary sandbox file", async () => {
     const runCommand = vi.fn(async (options: { cmd: string }) => ({
       exitCode: 0,
-      stdout: async () => (options.cmd === "rm" ? "" : "agent output"),
+      stdout: async () =>
+        options.cmd === "pwd"
+          ? "/vercel/sandbox\n"
+          : options.cmd === "sh"
+            ? "agent output"
+            : "",
       stderr: async () => "",
     }));
     const writeFiles = vi.fn(
@@ -73,7 +108,7 @@ describe("vercel()", () => {
     expect(content.toString()).toBe(
       "prompt with 'quotes'\nand a trailing newline\n",
     );
-    expect(runCommand).toHaveBeenNthCalledWith(1, {
+    expect(runCommand).toHaveBeenNthCalledWith(3, {
       cmd: "sh",
       args: [
         "-c",
@@ -81,7 +116,7 @@ describe("vercel()", () => {
       ],
       cwd: "/vercel/sandbox/workspace",
     });
-    expect(runCommand).toHaveBeenNthCalledWith(2, {
+    expect(runCommand).toHaveBeenNthCalledWith(4, {
       cmd: "rm",
       args: ["-f", "--", path],
     });
@@ -94,14 +129,14 @@ describe("vercel()", () => {
 
   it("delivers stdin while streaming output and cleans up after failure", async () => {
     const executionError = new Error("remote command failed");
-    const runCommand = vi
-      .fn()
-      .mockRejectedValueOnce(executionError)
-      .mockResolvedValueOnce({
+    const runCommand = vi.fn(async (options: { cmd: string }) => {
+      if (options.cmd === "sh") throw executionError;
+      return {
         exitCode: 0,
-        stdout: async () => "",
+        stdout: async () => (options.cmd === "pwd" ? "/vercel/sandbox\n" : ""),
         stderr: async () => "",
-      });
+      };
+    });
     const writeFiles = vi.fn(
       async (
         _files: Array<{ path: string; content: string | Buffer }>,
@@ -125,7 +160,7 @@ describe("vercel()", () => {
 
     const stdinPath = writeFiles.mock.calls[0]![0]![0]!.path;
     expect(runCommand).toHaveBeenNthCalledWith(
-      1,
+      3,
       expect.objectContaining({
         cmd: "sh",
         args: [
@@ -134,7 +169,7 @@ describe("vercel()", () => {
         ],
       }),
     );
-    expect(runCommand).toHaveBeenNthCalledWith(2, {
+    expect(runCommand).toHaveBeenNthCalledWith(4, {
       cmd: "rm",
       args: ["-f", "--", stdinPath],
     });

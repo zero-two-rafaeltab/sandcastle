@@ -9,7 +9,7 @@
 import { execSync } from "node:child_process";
 import { readFile, unlink, writeFile, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { Writable } from "node:stream";
 import {
   createIsolatedSandboxProvider,
@@ -23,8 +23,8 @@ import {
   redirectCommandStdinFromFile,
 } from "./stdin-file.js";
 
-/** Worktree path inside the Vercel sandbox. */
-const VERCEL_REPO_PATH = "/vercel/sandbox/workspace";
+/** Worktree directory inside the Vercel sandbox's default working directory. */
+const VERCEL_WORKTREE_DIR = "workspace";
 
 /**
  * Options for creating a Vercel sandbox provider.
@@ -172,11 +172,36 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
         createParams as Parameters<typeof Sandbox.create>[0],
       );
 
-      // Ensure worktree directory exists
-      await sandbox.mkDir(VERCEL_REPO_PATH);
+      let worktreePath: string;
+      try {
+        // Vercel SDK 2.x starts in /vercel/sandbox, while 3.x starts in
+        // /vercel. Discover the default rather than depending on image layout.
+        const pwdResult = await sandbox.runCommand({ cmd: "pwd" });
+        const defaultCwd = (await pwdResult.stdout()).trim();
+        if (pwdResult.exitCode !== 0 || !posix.isAbsolute(defaultCwd)) {
+          const stderr = await pwdResult.stderr();
+          throw new Error(
+            `Could not determine Vercel sandbox working directory: ${stderr || defaultCwd}`,
+          );
+        }
+
+        worktreePath = posix.join(defaultCwd, VERCEL_WORKTREE_DIR);
+        const mkdirResult = await sandbox.runCommand({
+          cmd: "mkdir",
+          args: ["-p", worktreePath],
+        });
+        if (mkdirResult.exitCode !== 0) {
+          throw new Error(
+            `Could not create Vercel sandbox worktree directory: ${await mkdirResult.stderr()}`,
+          );
+        }
+      } catch (error) {
+        await sandbox.stop().catch(() => {});
+        throw error;
+      }
 
       const handle: IsolatedSandboxHandle = {
-        worktreePath: VERCEL_REPO_PATH,
+        worktreePath,
 
         exec: async (
           command: string,
@@ -239,7 +264,7 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
               const result = await sandbox.runCommand({
                 cmd: "sh",
                 args: ["-c", commandToRun],
-                cwd: opts?.cwd ?? VERCEL_REPO_PATH,
+                cwd: opts?.cwd ?? worktreePath,
                 stdout: stdoutWritable,
                 stderr: stderrWritable,
                 ...(opts?.sudo ? { sudo: true } : {}),
@@ -255,7 +280,7 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
             const result = await sandbox.runCommand({
               cmd: "sh",
               args: ["-c", commandToRun],
-              cwd: opts?.cwd ?? VERCEL_REPO_PATH,
+              cwd: opts?.cwd ?? worktreePath,
               ...(opts?.sudo ? { sudo: true } : {}),
             });
 
