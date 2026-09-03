@@ -19,10 +19,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -137,7 +137,7 @@ jobs:
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-package-${{ github.sha }}
           path: ${{ steps.pack.outputs.package_file }}
@@ -155,13 +155,13 @@ jobs:
       id-token: write
     steps:
       - name: Download verified package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-package-${{ github.sha }}
           path: package-artifact
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
