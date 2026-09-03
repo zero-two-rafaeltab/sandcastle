@@ -232,10 +232,10 @@ export const FileDisplay = {
 };
 
 const severityToClack: Record<Severity, (message: string) => void> = {
-  info: clack.log.info,
-  success: clack.log.success,
-  warn: clack.log.warning,
-  error: clack.log.error,
+  info: (message) => clack.log.info(message),
+  success: (message) => clack.log.success(message),
+  warn: (message) => clack.log.warning(message),
+  error: (message) => clack.log.error(message),
 };
 
 export const terminalStyle = {

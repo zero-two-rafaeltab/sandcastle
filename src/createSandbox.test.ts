@@ -338,8 +338,10 @@ describe("createSandbox", () => {
       const stdoutWriteSpy = vi
         .spyOn(process.stdout, "write")
         .mockImplementation(() => true);
-      vi.spyOn(clack.log, "info").mockImplementation(() => {});
-      vi.spyOn(clack.log, "success").mockImplementation(() => {});
+      const infoSpy = vi.spyOn(clack.log, "info").mockImplementation(() => {});
+      const successSpy = vi
+        .spyOn(clack.log, "success")
+        .mockImplementation(() => {});
       vi.spyOn(clack.log, "warning").mockImplementation(() => {});
       vi.spyOn(clack.log, "error").mockImplementation(() => {});
 
@@ -388,6 +390,12 @@ describe("createSandbox", () => {
         expect(stepSpy).toHaveBeenCalledWith(expect.stringContaining("Bash"));
         expect(stepSpy).toHaveBeenCalledWith(
           expect.stringContaining("npm test"),
+        );
+        expect(successSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Agent started"),
+        );
+        expect(infoSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Reached max iterations (1)."),
         );
         for (const line of [textLine, toolLine, resultLine]) {
           if (verbose) {
