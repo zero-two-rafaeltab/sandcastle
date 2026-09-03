@@ -1397,3 +1397,14 @@ npm run typecheck # Type-check
 ## License
 
 MIT
+
+> [!IMPORTANT]
+> This is the `publish` branch of the `zero-two-rafaeltab/sandcastle` fork. Its prereleases are published as
+> `@rafaeltab/sandcastle` for temporary use. Install an exact version through an npm alias so existing
+> `@ai-hero/sandcastle` imports continue to work:
+>
+> ```bash
+> npm install --save-dev --save-exact '@ai-hero/sandcastle@npm:@rafaeltab/sandcastle@VERSION'
+> ```
+>
+> Replace `VERSION` with the prerelease to consume. See [PUBLISHING.md](./PUBLISHING.md) for the release process.

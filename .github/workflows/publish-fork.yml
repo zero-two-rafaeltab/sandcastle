@@ -1,0 +1,200 @@
+name: Publish fork
+
+on:
+  push:
+    branches:
+      - publish
+
+concurrency:
+  group: publish-fork
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Verify source package metadata
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const packageJson = JSON.parse(
+            await readFile(new URL("./package.json", import.meta.url), "utf8"),
+          );
+
+          if (packageJson.name !== "@ai-hero/sandcastle") {
+            throw new Error(`Unexpected source package ${packageJson.name}`);
+          }
+
+          if (!/^\d+\.\d+\.\d+-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/.test(packageJson.version)) {
+            throw new Error(
+              `Version ${packageJson.version} is not an explicit prerelease version`,
+            );
+          }
+          NODE
+
+      - name: Prepare fork package metadata
+        run: |
+          npm pkg set \
+            name=@rafaeltab/sandcastle \
+            repository.url=https://github.com/zero-two-rafaeltab/sandcastle \
+            publishConfig.access=public \
+            publishConfig.tag=preview
+
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+          const expected = {
+            name: "@rafaeltab/sandcastle",
+            repositoryUrl: "https://github.com/zero-two-rafaeltab/sandcastle",
+            access: "public",
+            tag: "preview",
+          };
+
+          if (packageJson.name !== expected.name) {
+            throw new Error(`Refusing to publish unexpected package ${packageJson.name}`);
+          }
+
+          if (packageJson.repository?.url !== expected.repositoryUrl) {
+            throw new Error(
+              `repository.url must be ${expected.repositoryUrl} for npm provenance`,
+            );
+          }
+
+          if (packageJson.publishConfig?.access !== expected.access) {
+            throw new Error("publishConfig.access must be public");
+          }
+
+          if (packageJson.publishConfig?.tag !== expected.tag) {
+            throw new Error("publishConfig.tag must be preview");
+          }
+          NODE
+
+      - name: Pack and inspect package
+        id: pack
+        shell: bash
+        run: |
+          if ! grep -Fq '@rafaeltab/sandcastle' README.md; then
+            echo "::error::README is missing the fork installation notice"
+            exit 1
+          fi
+
+          npm pack --json > pack-result.json
+          package_file="$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const result = JSON.parse(readFileSync("pack-result.json", "utf8"));
+            process.stdout.write(result[0].filename);
+          ')"
+
+          tar -tzf "$package_file" > package-contents.txt
+
+          required_files=(
+            package/package.json
+            package/README.md
+            package/LICENSE
+            package/dist/index.js
+            package/dist/index.d.ts
+            package/dist/main.js
+            package/dist/sandboxes/docker.js
+            package/dist/templates/blank/template.json
+          )
+
+          for required_file in "${required_files[@]}"; do
+            if ! grep -Fxq "$required_file" package-contents.txt; then
+              echo "::error::Package is missing $required_file"
+              exit 1
+            fi
+          done
+
+          echo "Package contents:"
+          cat package-contents.txt
+          echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package-${{ github.sha }}
+          path: ${{ steps.pack.outputs.package_file }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish package
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-preview
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package-${{ github.sha }}
+          path: package-artifact
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install OIDC-capable npm
+        run: npm install --global npm@11.19.1
+
+      - name: Publish preview
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          shopt -s nullglob
+          package_files=(package-artifact/*.tgz)
+
+          if [ "${#package_files[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one verified package artifact"
+            exit 1
+          fi
+
+          package_file="${package_files[0]}"
+          package_json="$(tar -xOf "$package_file" package/package.json)"
+          package_name="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).name)' "$package_json")"
+          package_version="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).version)' "$package_json")"
+
+          if [ "$package_name" != "@rafaeltab/sandcastle" ]; then
+            echo "::error::Refusing to publish unexpected package $package_name"
+            exit 1
+          fi
+
+          if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
+            echo "::error::$package_name@$package_version already exists"
+            exit 1
+          fi
+
+          npm publish "$package_file" --access public --tag preview
