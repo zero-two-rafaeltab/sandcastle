@@ -197,4 +197,5 @@ jobs:
             exit 1
           fi
 
-          npm publish "$package_file" --access public --tag preview
+          # The ./ prefix makes npm treat this as a local tarball instead of a GitHub shorthand.
+          npm publish "./$package_file" --access public --tag preview
