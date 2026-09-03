@@ -35,6 +35,9 @@ Consumers should pin an exact version. To keep existing Sandcastle imports uncha
 
 ## Authentication
 
-The initial publication uses the short-lived `NPM_TOKEN` secret in the `npm-preview` GitHub environment. After
-the package exists, configure npm Trusted Publishing for this repository, `publish-fork.yml`, and the
-`npm-preview` environment. Then remove the GitHub secret and revoke the npm token; later workflow runs use OIDC.
+Publishing uses npm Trusted Publishing with GitHub Actions OIDC. The npm configuration must authorize the
+`zero-two-rafaeltab/sandcastle` repository, the `publish-fork.yml` workflow, the `npm-preview` environment, and
+the `npm publish` action. The workflow does not pass a write token to npm.
+
+Any legacy `NPM_TOKEN` environment secret is unused and can be deleted after its corresponding npm token has
+been revoked.
