@@ -16,7 +16,7 @@ upstream. Product changes brought onto this branch should still arrive with thei
 3. Set a new prerelease version in both `package.json` and `package-lock.json`, for example:
 
    ```bash
-   npm version 0.13.0-fork.1 --no-git-tag-version
+   npm version 0.13.0-fork.2 --no-git-tag-version
    ```
 
 4. Commit and push the completed release state to `publish`.
@@ -30,7 +30,7 @@ exists.
 Consumers should pin an exact version. To keep existing Sandcastle imports unchanged, use an npm alias:
 
 ```json
-"@ai-hero/sandcastle": "npm:@rafaeltab/sandcastle@0.13.0-fork.0"
+"@ai-hero/sandcastle": "npm:@rafaeltab/sandcastle@0.13.0-fork.1"
 ```
 
 ## Authentication
